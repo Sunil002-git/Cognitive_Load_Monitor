@@ -1,62 +1,76 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Cognitive Load Monitor</title>
+{% extends "base.html" %}
+{% block content %}
 
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-
-    <!-- MediaPipe -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-gauge@0.3.0/dist/chartjs-chart-gauge.min.js"></script>
-    <style>
-        body { font-family: Arial; text-align: center; }
-        video { transform: scaleX(-1); }
-        .alert { color: red; font-weight: bold; }
-    </style>
-</head>
-<body>
-
-<h2>Cognitive Load Monitor</h2>
-
-<video id="videoElement" width="480" height="360" autoplay></video>
-
-<h3>Blink Count: <span id="blinkCount">0</span></h3>
-<h3>Fatigue Score: <span id="fatigueScore">0</span></h3>
-<h3 id="alertMessage" class="alert"></h3>
+<!-- ================= SUMMARY CARDS ================= -->
 <div class="row mb-4">
+
     <div class="col-md-4">
-        <div class="card shadow">
+        <div class="card shadow-sm border-0">
             <div class="card-body text-center">
-                <h5>Burnout Risk</h5>
-                <h2 
-                    class="
+                <h6 class="text-muted">Burnout Risk</h6>
+                <h3 class="
                     {% if burnout_risk == 'Low' %}text-success
                     {% elif burnout_risk == 'Medium' %}text-warning
                     {% else %}text-danger{% endif %}
-                    ">
+                ">
                     {{ burnout_risk }}
-                </h2>
-                <p>Score: {{ burnout_score }}</p>
+                </h3>
+                <small>Score: {{ burnout_score }}</small>
             </div>
         </div>
     </div>
-</div>
-<div class="row mt-4">
-    <div class="col-md-6">
-        <div class="card shadow">
+
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0">
             <div class="card-body text-center">
-                <h5>Current Fatigue Level</h5>
+                <h6 class="text-muted">Blink Count</h6>
+                <h3 id="blinkCount">0</h3>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0">
+            <div class="card-body text-center">
+                <h6 class="text-muted">Posture Status</h6>
+                <h3 id="fatigueStatus" class="text-info">Monitoring</h3>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+
+<!-- ================= LIVE MONITOR + GAUGE ================= -->
+<div class="row mb-4">
+
+    <div class="col-md-6">
+        <div class="card shadow-sm border-0">
+            <div class="card-body text-center">
+                <h5>Live Monitoring</h5>
+                <video id="videoElement" width="100%" autoplay></video>
+                <p id="alertMessage" class="text-danger mt-2"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card shadow-sm border-0">
+            <div class="card-body text-center">
+                <h5>Fatigue Severity Gauge</h5>
                 <canvas id="fatigueGauge"></canvas>
             </div>
         </div>
     </div>
+
 </div>
-<div class="row mt-4">
+
+
+<!-- ================= ANALYTICS ================= -->
+<div class="row">
+
     <div class="col-md-6">
-        <div class="card shadow">
+        <div class="card shadow-sm border-0">
             <div class="card-body">
                 <h5>Fatigue Trend (Last 7 Days)</h5>
                 <canvas id="fatigueChart"></canvas>
@@ -65,161 +79,130 @@
     </div>
 
     <div class="col-md-6">
-        <div class="card shadow">
+        <div class="card shadow-sm border-0">
             <div class="card-body">
                 <h5>Work Hours (Last 7 Days)</h5>
                 <canvas id="workChart"></canvas>
             </div>
         </div>
     </div>
+
 </div>
+
+
+<!-- ================= SCRIPTS ================= -->
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-gauge@0.3.0/dist/chartjs-chart-gauge.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script>
 
-fetch("/analytics-data/")
-.then(response => response.json())
-.then(data => {
-
-    // Fatigue Chart
-    new Chart(document.getElementById("fatigueChart"), {
-        type: 'line',
-        data: {
-            labels: data.labels,
-            datasets: [{
-                label: 'Avg Fatigue',
-                data: data.fatigue,
-                borderColor: 'red',
-                fill: false,
-                tension: 0.3
-            }]
-        }
-    });
-
-    // Work Hours Chart
-    new Chart(document.getElementById("workChart"), {
-        type: 'bar',
-        data: {
-            labels: data.labels,
-            datasets: [{
-                label: 'Work Hours',
-                data: data.work_hours,
-                backgroundColor: 'blue'
-            }]
-        }
-    });
-
-});
-
 let blinkCount = 0;
 let eyeClosedFrames = 0;
+let fatigueGauge;
+let fatigueChart;
+let workChart;
 
-const LEFT_EYE = [33, 160, 158, 133, 153, 144];
-const RIGHT_EYE = [362, 385, 387, 263, 373, 380];
+const LEFT_EYE = [33,160,158,133,153,144];
+const RIGHT_EYE = [362,385,387,263,373,380];
 
-function distance(a, b) {
-    return Math.sqrt(
-        Math.pow(a.x - b.x, 2) +
-        Math.pow(a.y - b.y, 2)
-    );
+function distance(a,b){
+    return Math.sqrt(Math.pow(a.x-b.x,2)+Math.pow(a.y-b.y,2));
 }
 
-function calculateEAR(landmarks, eye) {
-    const A = distance(landmarks[eye[1]], landmarks[eye[5]]);
-    const B = distance(landmarks[eye[2]], landmarks[eye[4]]);
-    const C = distance(landmarks[eye[0]], landmarks[eye[3]]);
-    return (A + B) / (2.0 * C);
+function calculateEAR(landmarks, eye){
+    const A = distance(landmarks[eye[1]],landmarks[eye[5]]);
+    const B = distance(landmarks[eye[2]],landmarks[eye[4]]);
+    const C = distance(landmarks[eye[0]],landmarks[eye[3]]);
+    return (A+B)/(2.0*C);
 }
 
 const videoElement = document.getElementById('videoElement');
 
 const faceMesh = new FaceMesh({
-    locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-    }
+    locateFile: (file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
 });
 
 faceMesh.setOptions({
-    maxNumFaces: 1,
-    refineLandmarks: true,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
+    maxNumFaces:1,
+    refineLandmarks:true,
+    minDetectionConfidence:0.5,
+    minTrackingConfidence:0.5
 });
 
-faceMesh.onResults(results => {
-    if (results.multiFaceLandmarks.length > 0) {
+faceMesh.onResults(results=>{
+    if(results.multiFaceLandmarks.length>0){
 
         const landmarks = results.multiFaceLandmarks[0];
 
-        // ---- BLINK DETECTION ----
-        const leftEAR = calculateEAR(landmarks, LEFT_EYE);
-        const rightEAR = calculateEAR(landmarks, RIGHT_EYE);
-        const avgEAR = (leftEAR + rightEAR) / 2.0;
+        // Blink Detection
+        const leftEAR = calculateEAR(landmarks,LEFT_EYE);
+        const rightEAR = calculateEAR(landmarks,RIGHT_EYE);
+        const avgEAR = (leftEAR+rightEAR)/2.0;
 
-        if (avgEAR < 0.20) {
+        if(avgEAR<0.20){
             eyeClosedFrames++;
-        } else {
-            if (eyeClosedFrames > 2) {
+        }else{
+            if(eyeClosedFrames>2){
                 blinkCount++;
-                document.getElementById("blinkCount").innerText = blinkCount;
+                document.getElementById("blinkCount").innerText=blinkCount;
             }
-            eyeClosedFrames = 0;
+            eyeClosedFrames=0;
         }
 
-        // ---- HEAD TILT DETECTION ----
+        // Head Tilt Detection
         const leftEyeOuter = landmarks[33];
         const rightEyeOuter = landmarks[263];
 
-        let deltaX = rightEyeOuter.x - leftEyeOuter.x;
-        let deltaY = rightEyeOuter.y - leftEyeOuter.y;
+        let deltaX = rightEyeOuter.x-leftEyeOuter.x;
+        let deltaY = rightEyeOuter.y-leftEyeOuter.y;
 
-        let tiltAngle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
-        tiltAngle = Math.abs(tiltAngle);
+        let tiltAngle = Math.abs(Math.atan2(deltaY,deltaX)*(180/Math.PI));
 
-        // Posture alert
-        if (tiltAngle > 15) {
-            document.getElementById("alertMessage").innerText =
-                "⚠ Poor posture detected. Sit straight.";
-        } else {
-            document.getElementById("alertMessage").innerText = "";
+        if(tiltAngle>15){
+            document.getElementById("fatigueStatus").innerText="Poor Posture";
+            document.getElementById("fatigueStatus").className="text-warning";
+        }else{
+            document.getElementById("fatigueStatus").innerText="Good";
+            document.getElementById("fatigueStatus").className="text-success";
         }
 
-        // Send data to backend (ML will calculate fatigue)
-        sendDataToBackend(blinkCount, tiltAngle);
+        sendDataToBackend(blinkCount,tiltAngle);
     }
 });
 
-const camera = new Camera(videoElement, {
-    onFrame: async () => {
-        await faceMesh.send({image: videoElement});
-    },
-    width: 480,
-    height: 360
+const camera = new Camera(videoElement,{
+    onFrame:async()=>{ await faceMesh.send({image:videoElement}); },
+    width:480,
+    height:360
 });
 camera.start();
 
-function sendDataToBackend(blink, tiltAngle) {
-    fetch("/save-fatigue/", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": getCookie('csrftoken')
+function sendDataToBackend(blink,tilt){
+    fetch("/save-fatigue/",{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json",
+            "X-CSRFToken":getCookie('csrftoken')
         },
-        body: JSON.stringify({
-            blink_rate: blink,
-            eye_closure_duration: 0.3,
-            head_tilt_angle: tiltAngle
+        body:JSON.stringify({
+            blink_rate:blink,
+            eye_closure_duration:0.3,
+            head_tilt_angle:tilt
         })
     });
 }
 
-function getCookie(name) {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+function getCookie(name){
+    let cookieValue=null;
+    if(document.cookie && document.cookie!==''){
+        const cookies=document.cookie.split(';');
+        for(let i=0;i<cookies.length;i++){
+            const cookie=cookies[i].trim();
+            if(cookie.substring(0,name.length+1)===(name+'=')){
+                cookieValue=decodeURIComponent(cookie.substring(name.length+1));
                 break;
             }
         }
@@ -227,45 +210,65 @@ function getCookie(name) {
     return cookieValue;
 }
 
-</script>
-<script>
-fetch("/current-fatigue/")
-.then(res => res.json())
-.then(data => {
 
-    const ctx = document.getElementById('fatigueGauge');
-
-    new Chart(ctx, {
-        type: 'gauge',
-        data: {
-            datasets: [{
-                value: data.fatigue,
-                minValue: 0,
-                data: [0.4, 0.7, 1],
-                backgroundColor: [
-                    'green',
-                    'yellow',
-                    'red'
-                ]
-            }]
-        },
-        options: {
-            needle: {
-                radiusPercentage: 2,
-                widthPercentage: 3,
-                lengthPercentage: 80,
-                color: 'black'
-            },
-            valueLabel: {
-                display: true,
-                formatter: (value) => {
-                    return "Fatigue: " + value;
+// ================= GAUGE =================
+function loadGauge(){
+    fetch("/current-fatigue/")
+    .then(res=>res.json())
+    .then(data=>{
+        if(!fatigueGauge){
+            fatigueGauge=new Chart(document.getElementById('fatigueGauge'),{
+                type:'gauge',
+                data:{
+                    datasets:[{
+                        value:data.fatigue,
+                        minValue:0,
+                        data:[0.4,0.7,1],
+                        backgroundColor:['green','yellow','red']
+                    }]
                 }
-            }
+            });
+        }else{
+            fatigueGauge.data.datasets[0].value=data.fatigue;
+            fatigueGauge.update();
+        }
+    });
+}
+loadGauge();
+setInterval(loadGauge,10000);
+
+
+// ================= ANALYTICS =================
+fetch("/analytics-data/")
+.then(res=>res.json())
+.then(data=>{
+    fatigueChart=new Chart(document.getElementById("fatigueChart"),{
+        type:'line',
+        data:{
+            labels:data.labels,
+            datasets:[{
+                label:'Avg Fatigue',
+                data:data.fatigue,
+                borderColor:'red',
+                fill:false,
+                tension:0.3
+            }]
         }
     });
 
+    workChart=new Chart(document.getElementById("workChart"),{
+        type:'bar',
+        data:{
+            labels:data.labels,
+            datasets:[{
+                label:'Work Hours',
+                data:data.work_hours,
+                backgroundColor:'blue'
+            }]
+        }
+    });
 });
+
 </script>
-</body>
-</html>
+
+{% endblock %}

@@ -15,10 +15,12 @@ from datetime import date, datetime, timedelta
 import joblib
 import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "fatigue_model.pkl")
+MODEL_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "fatigue_model.pkl"
+)
 
-model = joblib.load(MODEL_PATH)
+ml_model = joblib.load(MODEL_PATH)  
 
 @login_required
 def dashboard(request):
@@ -60,7 +62,7 @@ def save_fatigue(request):
             )
 
         # ML prediction
-        prediction = model.predict_proba([[blink, closure, tilt, session_minutes]])
+        prediction = ml_model.predict_proba([[blink, closure, tilt, session_minutes]])
         fatigue_probability = float(prediction[0][1])
 
         FatigueLog.objects.create(
@@ -163,6 +165,7 @@ def calculate_burnout(user):
     # Save or update BurnoutRisk
     BurnoutRisk.objects.update_or_create(
         user=user,
+        calculated_at__date=today,
         defaults={
             "weekly_avg_fatigue": avg_fatigue,
             "burnout_score": burnout_score,
