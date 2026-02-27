@@ -9,7 +9,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-gauge@0.3.0/dist/chartjs-chart-gauge.min.js"></script>
     <style>
         body { font-family: Arial; text-align: center; }
         video { transform: scaleX(-1); }
@@ -25,15 +26,93 @@
 <h3>Blink Count: <span id="blinkCount">0</span></h3>
 <h3>Fatigue Score: <span id="fatigueScore">0</span></h3>
 <h3 id="alertMessage" class="alert"></h3>
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card shadow">
+            <div class="card-body text-center">
+                <h5>Burnout Risk</h5>
+                <h2 
+                    class="
+                    {% if burnout_risk == 'Low' %}text-success
+                    {% elif burnout_risk == 'Medium' %}text-warning
+                    {% else %}text-danger{% endif %}
+                    ">
+                    {{ burnout_risk }}
+                </h2>
+                <p>Score: {{ burnout_score }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card shadow">
+            <div class="card-body text-center">
+                <h5>Current Fatigue Level</h5>
+                <canvas id="fatigueGauge"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card shadow">
+            <div class="card-body">
+                <h5>Fatigue Trend (Last 7 Days)</h5>
+                <canvas id="fatigueChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card shadow">
+            <div class="card-body">
+                <h5>Work Hours (Last 7 Days)</h5>
+                <canvas id="workChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
 
 <script>
 
-let blinkCount = 0;
-let fatigueScore = 0;
-let eyeClosedFrames = 0;
-let lastBlinkTime = Date.now();
+fetch("/analytics-data/")
+.then(response => response.json())
+.then(data => {
 
-// Eye landmark indexes (MediaPipe)
+    // Fatigue Chart
+    new Chart(document.getElementById("fatigueChart"), {
+        type: 'line',
+        data: {
+            labels: data.labels,
+            datasets: [{
+                label: 'Avg Fatigue',
+                data: data.fatigue,
+                borderColor: 'red',
+                fill: false,
+                tension: 0.3
+            }]
+        }
+    });
+
+    // Work Hours Chart
+    new Chart(document.getElementById("workChart"), {
+        type: 'bar',
+        data: {
+            labels: data.labels,
+            datasets: [{
+                label: 'Work Hours',
+                data: data.work_hours,
+                backgroundColor: 'blue'
+            }]
+        }
+    });
+
+});
+
+let blinkCount = 0;
+let eyeClosedFrames = 0;
+
 const LEFT_EYE = [33, 160, 158, 133, 153, 144];
 const RIGHT_EYE = [362, 385, 387, 263, 373, 380];
 
@@ -68,8 +147,10 @@ faceMesh.setOptions({
 
 faceMesh.onResults(results => {
     if (results.multiFaceLandmarks.length > 0) {
+
         const landmarks = results.multiFaceLandmarks[0];
 
+        // ---- BLINK DETECTION ----
         const leftEAR = calculateEAR(landmarks, LEFT_EYE);
         const rightEAR = calculateEAR(landmarks, RIGHT_EYE);
         const avgEAR = (leftEAR + rightEAR) / 2.0;
@@ -84,23 +165,26 @@ faceMesh.onResults(results => {
             eyeClosedFrames = 0;
         }
 
-        // Fatigue logic
-        if (blinkCount < 5) {
-            fatigueScore = 6;
-        } else {
-            fatigueScore = 2;
-        }
+        // ---- HEAD TILT DETECTION ----
+        const leftEyeOuter = landmarks[33];
+        const rightEyeOuter = landmarks[263];
 
-        document.getElementById("fatigueScore").innerText = fatigueScore;
+        let deltaX = rightEyeOuter.x - leftEyeOuter.x;
+        let deltaY = rightEyeOuter.y - leftEyeOuter.y;
 
-        if (fatigueScore > 5) {
+        let tiltAngle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
+        tiltAngle = Math.abs(tiltAngle);
+
+        // Posture alert
+        if (tiltAngle > 15) {
             document.getElementById("alertMessage").innerText =
-                "⚠ You seem tired. Please take a short break.";
+                "⚠ Poor posture detected. Sit straight.";
         } else {
             document.getElementById("alertMessage").innerText = "";
         }
 
-        sendDataToBackend(blinkCount, fatigueScore);
+        // Send data to backend (ML will calculate fatigue)
+        sendDataToBackend(blinkCount, tiltAngle);
     }
 });
 
@@ -113,7 +197,7 @@ const camera = new Camera(videoElement, {
 });
 camera.start();
 
-function sendDataToBackend(blink, fatigue) {
+function sendDataToBackend(blink, tiltAngle) {
     fetch("/save-fatigue/", {
         method: "POST",
         headers: {
@@ -122,7 +206,8 @@ function sendDataToBackend(blink, fatigue) {
         },
         body: JSON.stringify({
             blink_rate: blink,
-            fatigue_score: fatigue
+            eye_closure_duration: 0.3,
+            head_tilt_angle: tiltAngle
         })
     });
 }
@@ -143,6 +228,44 @@ function getCookie(name) {
 }
 
 </script>
+<script>
+fetch("/current-fatigue/")
+.then(res => res.json())
+.then(data => {
 
+    const ctx = document.getElementById('fatigueGauge');
+
+    new Chart(ctx, {
+        type: 'gauge',
+        data: {
+            datasets: [{
+                value: data.fatigue,
+                minValue: 0,
+                data: [0.4, 0.7, 1],
+                backgroundColor: [
+                    'green',
+                    'yellow',
+                    'red'
+                ]
+            }]
+        },
+        options: {
+            needle: {
+                radiusPercentage: 2,
+                widthPercentage: 3,
+                lengthPercentage: 80,
+                color: 'black'
+            },
+            valueLabel: {
+                display: true,
+                formatter: (value) => {
+                    return "Fatigue: " + value;
+                }
+            }
+        }
+    });
+
+});
+</script>
 </body>
 </html>
